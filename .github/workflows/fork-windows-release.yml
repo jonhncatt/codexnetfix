@@ -173,6 +173,10 @@ jobs:
           cp dist/windows-x64/codex-command-runner.exe "$portable_dir/codex-command-runner.exe"
           cp dist/windows-x64/codex-windows-sandbox-setup.exe "$portable_dir/codex-windows-sandbox-setup.exe"
           cp dist/windows-x64/rg.exe "$portable_dir/rg.exe"
+          cp scripts/portable/run.cmd "$portable_dir/run.cmd"
+          cp scripts/portable/run.ps1 "$portable_dir/run.ps1"
+          cp scripts/portable/company-env.cmd.example "$portable_dir/company-env.cmd.example"
+          cp scripts/portable/company-env.ps1.example "$portable_dir/company-env.ps1.example"
 
           (
             cd "$portable_dir"
@@ -188,6 +192,11 @@ jobs:
           - codex-npm-win32-x64-$VERSION.tgz: used by scripts/install/install.ps1
           - codex-windows-x64-portable-$VERSION.zip: unzip and run without installing
           - install.ps1: Windows installer script
+
+          Portable example:
+          1. Unzip codex-windows-x64-portable-$VERSION.zip
+          2. Copy company-env.cmd.example to company-env.cmd and fill in API_KEY, BASE_URL, CA_CERT_PATH
+          3. Run run.cmd
 
           Installer example:
           \$env:CODEX_INSTALL_REPO = '${GITHUB_REPOSITORY}'

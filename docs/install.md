@@ -42,7 +42,24 @@ iwr https://raw.githubusercontent.com/jonhncatt/codexnetfix/main/scripts/install
 ```
 
 If you prefer not to install anything into `PATH`, download the portable zip,
-extract it anywhere, and run `codex.exe` directly from PowerShell.
+extract it anywhere, copy one of the example env files, and run the launcher:
+
+```powershell
+Copy-Item .\company-env.ps1.example .\company-env.ps1
+# edit company-env.ps1
+.\run.ps1
+```
+
+or:
+
+```cmd
+copy company-env.cmd.example company-env.cmd
+REM edit company-env.cmd
+run.cmd
+```
+
+The portable launcher keeps all Codex state under `.codex-home` inside the
+portable directory and only changes `PATH` for that process.
 
 ### Build from source
 

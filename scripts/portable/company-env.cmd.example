@@ -1,0 +1,4 @@
+@echo off
+set "API_KEY=your-company-token"
+set "BASE_URL=https://your-company-gateway.example.com/v1"
+set "CA_CERT_PATH=%~dp0company-root-ca.pem"

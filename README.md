@@ -87,7 +87,15 @@ iwr https://raw.githubusercontent.com/jonhncatt/codexnetfix/main/scripts/install
 
 If you do not want an installer at all, use the release asset
 `codex-windows-x64-portable-<version>.zip`, unzip it anywhere, and run
-`codex.exe` from PowerShell.
+`run.cmd` or `run.ps1`.
+
+The portable zip does not need administrator rights and does not add anything to
+system `PATH`. It keeps `CODEX_HOME` inside the unzip directory and prepends the
+zip directory to `PATH` for the current process so bundled `rg.exe` works.
+
+For portable use, copy `company-env.cmd.example` to `company-env.cmd` or copy
+`company-env.ps1.example` to `company-env.ps1`, then edit your company values
+locally next to the executable.
 
 Example company environment on Windows:
 
