@@ -2,8 +2,28 @@ use super::*;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use pretty_assertions::assert_eq;
+use std::collections::HashMap;
 use std::num::NonZeroU64;
 use tempfile::tempdir;
+
+struct MapEnv {
+    values: HashMap<String, String>,
+}
+
+impl EnvSource for MapEnv {
+    fn var(&self, key: &str) -> Option<String> {
+        self.values.get(key).cloned()
+    }
+}
+
+fn map_env(pairs: &[(&str, &str)]) -> MapEnv {
+    MapEnv {
+        values: pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect(),
+    }
+}
 
 #[test]
 fn test_deserialize_ollama_model_provider_toml() {
@@ -176,4 +196,43 @@ refresh_interval_ms = 0
     let auth = provider.auth.expect("auth config should deserialize");
     assert_eq!(auth.refresh_interval_ms, 0);
     assert_eq!(auth.refresh_interval(), None);
+}
+
+#[test]
+fn create_openai_provider_uses_openai_base_url_env() {
+    let provider = ModelProviderInfo::create_openai_provider_with_env(
+        None,
+        &map_env(&[(OPENAI_BASE_URL_ENV_VAR, "https://corp.example.com/v1")]),
+    );
+
+    assert_eq!(
+        provider.base_url.as_deref(),
+        Some("https://corp.example.com/v1")
+    );
+}
+
+#[test]
+fn create_openai_provider_falls_back_to_base_url_env_alias() {
+    let provider = ModelProviderInfo::create_openai_provider_with_env(
+        None,
+        &map_env(&[(BASE_URL_ENV_VAR, "https://compat.example.com/v1")]),
+    );
+
+    assert_eq!(
+        provider.base_url.as_deref(),
+        Some("https://compat.example.com/v1")
+    );
+}
+
+#[test]
+fn create_openai_provider_prefers_explicit_base_url_over_env() {
+    let provider = ModelProviderInfo::create_openai_provider_with_env(
+        Some("https://config.example.com/v1".into()),
+        &map_env(&[(OPENAI_BASE_URL_ENV_VAR, "https://env.example.com/v1")]),
+    );
+
+    assert_eq!(
+        provider.base_url.as_deref(),
+        Some("https://config.example.com/v1")
+    );
 }

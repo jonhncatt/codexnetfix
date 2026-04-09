@@ -15,6 +15,9 @@ use std::process::Command;
 use tempfile::TempDir;
 
 const CODEX_CA_CERT_ENV: &str = "CODEX_CA_CERTIFICATE";
+const CA_CERT_PATH_ENV: &str = "CA_CERT_PATH";
+const OFFCIATOOL_CA_CERT_PATH_ENV: &str = "OFFCIATOOL_CA_CERT_PATH";
+const OFFICETOOL_CA_CERT_PATH_ENV: &str = "OFFICETOOL_CA_CERT_PATH";
 const SSL_CERT_FILE_ENV: &str = "SSL_CERT_FILE";
 
 const TEST_CERT_1: &str = include_str!("fixtures/test-ca.pem");
@@ -37,6 +40,9 @@ fn run_probe(envs: &[(&str, &Path)]) -> std::process::Output {
     // `Command` inherits the parent environment by default, so scrub CA-related variables first or
     // these tests can accidentally pass/fail based on the developer shell or CI runner.
     cmd.env_remove(CODEX_CA_CERT_ENV);
+    cmd.env_remove(CA_CERT_PATH_ENV);
+    cmd.env_remove(OFFCIATOOL_CA_CERT_PATH_ENV);
+    cmd.env_remove(OFFICETOOL_CA_CERT_PATH_ENV);
     cmd.env_remove(SSL_CERT_FILE_ENV);
     for (key, value) in envs {
         cmd.env(key, value);
@@ -66,6 +72,16 @@ fn falls_back_to_ssl_cert_file() {
 }
 
 #[test]
+fn falls_back_to_ca_cert_path() {
+    let temp_dir = TempDir::new().expect("tempdir");
+    let cert_path = write_cert_file(&temp_dir, "corp.pem", TEST_CERT_1);
+
+    let output = run_probe(&[(CA_CERT_PATH_ENV, cert_path.as_path())]);
+
+    assert!(output.status.success());
+}
+
+#[test]
 fn prefers_codex_ca_cert_over_ssl_cert_file() {
     let temp_dir = TempDir::new().expect("tempdir");
     let cert_path = write_cert_file(&temp_dir, "ca.pem", TEST_CERT_1);
@@ -75,6 +91,16 @@ fn prefers_codex_ca_cert_over_ssl_cert_file() {
         (CODEX_CA_CERT_ENV, cert_path.as_path()),
         (SSL_CERT_FILE_ENV, bad_path.as_path()),
     ]);
+
+    assert!(output.status.success());
+}
+
+#[test]
+fn falls_back_to_officetool_ca_cert_path() {
+    let temp_dir = TempDir::new().expect("tempdir");
+    let cert_path = write_cert_file(&temp_dir, "officetool.pem", TEST_CERT_1);
+
+    let output = run_probe(&[(OFFICETOOL_CA_CERT_PATH_ENV, cert_path.as_path())]);
 
     assert!(output.status.success());
 }

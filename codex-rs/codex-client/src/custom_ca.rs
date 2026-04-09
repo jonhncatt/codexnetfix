@@ -9,7 +9,9 @@
 //!
 //! The module intentionally has a narrow responsibility:
 //!
-//! - read CA material from `CODEX_CA_CERTIFICATE`, falling back to `SSL_CERT_FILE`
+//! - read CA material from `CODEX_CA_CERTIFICATE`, falling back through
+//!   `CA_CERT_PATH`, `OFFICETOOL_CA_CERT_PATH`, `OFFCIATOOL_CA_CERT_PATH`, and
+//!   `SSL_CERT_FILE`
 //! - normalize PEM variants that show up in real deployments, including OpenSSL-style
 //!   `TRUSTED CERTIFICATE` labels and bundles that also contain CRLs
 //! - return user-facing errors that explain how to fix misconfigured CA files
@@ -59,8 +61,11 @@ use tracing::info;
 use tracing::warn;
 
 pub const CODEX_CA_CERT_ENV: &str = "CODEX_CA_CERTIFICATE";
+pub const CA_CERT_PATH_ENV: &str = "CA_CERT_PATH";
+pub const OFFICETOOL_CA_CERT_PATH_ENV: &str = "OFFICETOOL_CA_CERT_PATH";
+pub const OFFCIATOOL_CA_CERT_PATH_ENV: &str = "OFFCIATOOL_CA_CERT_PATH";
 pub const SSL_CERT_FILE_ENV: &str = "SSL_CERT_FILE";
-const CA_CERT_HINT: &str = "If you set CODEX_CA_CERTIFICATE or SSL_CERT_FILE, ensure it points to a PEM file containing one or more CERTIFICATE blocks, or unset it to use system roots.";
+const CA_CERT_HINT: &str = "If you set CODEX_CA_CERTIFICATE, CA_CERT_PATH, OFFICETOOL_CA_CERT_PATH, OFFCIATOOL_CA_CERT_PATH, or SSL_CERT_FILE, ensure it points to a PEM file containing one or more CERTIFICATE blocks, or unset it to use system roots.";
 type PemSection = (SectionKind, Vec<u8>);
 
 /// Describes why a transport using shared custom CA support could not be constructed.
@@ -165,8 +170,9 @@ impl From<BuildCustomCaTransportError> for io::Error {
 ///
 /// Callers supply the baseline builder configuration they need, and this helper layers in custom
 /// CA handling before finally constructing the client. `CODEX_CA_CERTIFICATE` takes precedence
-/// over `SSL_CERT_FILE`, and empty values for either are treated as unset so callers do not
-/// accidentally turn `VAR=""` into a bogus path lookup.
+/// over the broader compatibility aliases and `SSL_CERT_FILE`, and empty values for all
+/// variables are treated as unset so callers do not accidentally turn `VAR=""` into a bogus path
+/// lookup.
 ///
 /// Callers that build a raw `reqwest::Client` directly bypass this policy entirely. That is an
 /// easy mistake to make when adding a new outbound Codex HTTP path, and the resulting bug only
@@ -184,11 +190,12 @@ pub fn build_reqwest_client_with_custom_ca(
 
 /// Builds a rustls client config when a Codex custom CA bundle is configured.
 ///
-/// This is the websocket-facing sibling of [`build_reqwest_client_with_custom_ca`]. When
-/// `CODEX_CA_CERTIFICATE` or `SSL_CERT_FILE` selects a CA bundle, the returned config starts from
-/// the platform native roots and then adds the configured custom CA certificates. When no custom
-/// CA env var is set, this returns `Ok(None)` so websocket callers can keep using their ordinary
-/// default connector path.
+/// This is the websocket-facing sibling of [`build_reqwest_client_with_custom_ca`]. When one of
+/// `CODEX_CA_CERTIFICATE`, `CA_CERT_PATH`, `OFFICETOOL_CA_CERT_PATH`,
+/// `OFFCIATOOL_CA_CERT_PATH`, or `SSL_CERT_FILE` selects a CA bundle, the returned config starts
+/// from the platform native roots and then adds the configured custom CA certificates. When no
+/// custom CA env var is set, this returns `Ok(None)` so websocket callers can keep using their
+/// ordinary default connector path.
 ///
 /// Callers that let tungstenite build its default TLS connector directly bypass this policy
 /// entirely. That bug only shows up in environments where secure websocket traffic needs the same
@@ -358,14 +365,35 @@ trait EnvSource {
 
     /// Returns the configured CA bundle and which environment variable selected it.
     ///
-    /// `CODEX_CA_CERTIFICATE` wins over `SSL_CERT_FILE` because it is the Codex-specific override.
-    /// Keeping the winning variable name with the path lets later logging explain not only which
-    /// file was used but also why that file was chosen.
+    /// `CODEX_CA_CERTIFICATE` wins over the broader compatibility aliases and `SSL_CERT_FILE`
+    /// because it is the Codex-specific override. Keeping the winning variable name with the path
+    /// lets later logging explain not only which file was used but also why that file was chosen.
     fn configured_ca_bundle(&self) -> Option<ConfiguredCaBundle> {
         self.non_empty_path(CODEX_CA_CERT_ENV)
             .map(|path| ConfiguredCaBundle {
                 source_env: CODEX_CA_CERT_ENV,
                 path,
+            })
+            .or_else(|| {
+                self.non_empty_path(CA_CERT_PATH_ENV)
+                    .map(|path| ConfiguredCaBundle {
+                        source_env: CA_CERT_PATH_ENV,
+                        path,
+                    })
+            })
+            .or_else(|| {
+                self.non_empty_path(OFFICETOOL_CA_CERT_PATH_ENV)
+                    .map(|path| ConfiguredCaBundle {
+                        source_env: OFFICETOOL_CA_CERT_PATH_ENV,
+                        path,
+                    })
+            })
+            .or_else(|| {
+                self.non_empty_path(OFFCIATOOL_CA_CERT_PATH_ENV)
+                    .map(|path| ConfiguredCaBundle {
+                        source_env: OFFCIATOOL_CA_CERT_PATH_ENV,
+                        path,
+                    })
             })
             .or_else(|| {
                 self.non_empty_path(SSL_CERT_FILE_ENV)
@@ -689,8 +717,11 @@ mod tests {
     use tempfile::TempDir;
 
     use super::BuildCustomCaTransportError;
+    use super::CA_CERT_PATH_ENV;
     use super::CODEX_CA_CERT_ENV;
     use super::EnvSource;
+    use super::OFFCIATOOL_CA_CERT_PATH_ENV;
+    use super::OFFICETOOL_CA_CERT_PATH_ENV;
     use super::SSL_CERT_FILE_ENV;
     use super::maybe_build_rustls_client_config_with_env;
 
@@ -747,6 +778,36 @@ mod tests {
     }
 
     #[test]
+    fn ca_path_falls_back_to_ca_cert_path() {
+        let env = map_env(&[(CA_CERT_PATH_ENV, "/tmp/company.pem")]);
+
+        assert_eq!(
+            env.configured_ca_bundle().map(|bundle| bundle.path),
+            Some(PathBuf::from("/tmp/company.pem"))
+        );
+    }
+
+    #[test]
+    fn ca_path_falls_back_to_officetool_ca_cert_path() {
+        let env = map_env(&[(OFFICETOOL_CA_CERT_PATH_ENV, "/tmp/officetool.pem")]);
+
+        assert_eq!(
+            env.configured_ca_bundle().map(|bundle| bundle.path),
+            Some(PathBuf::from("/tmp/officetool.pem"))
+        );
+    }
+
+    #[test]
+    fn ca_path_falls_back_to_offciatool_ca_cert_path() {
+        let env = map_env(&[(OFFCIATOOL_CA_CERT_PATH_ENV, "/tmp/offciatool.pem")]);
+
+        assert_eq!(
+            env.configured_ca_bundle().map(|bundle| bundle.path),
+            Some(PathBuf::from("/tmp/offciatool.pem"))
+        );
+    }
+
+    #[test]
     fn ca_path_ignores_empty_values() {
         let env = map_env(&[
             (CODEX_CA_CERT_ENV, ""),
@@ -756,6 +817,19 @@ mod tests {
         assert_eq!(
             env.configured_ca_bundle().map(|bundle| bundle.path),
             Some(PathBuf::from("/tmp/fallback.pem"))
+        );
+    }
+
+    #[test]
+    fn ca_path_compat_aliases_beat_ssl_cert_file() {
+        let env = map_env(&[
+            (CA_CERT_PATH_ENV, "/tmp/company.pem"),
+            (SSL_CERT_FILE_ENV, "/tmp/fallback.pem"),
+        ]);
+
+        assert_eq!(
+            env.configured_ca_bundle().map(|bundle| bundle.path),
+            Some(PathBuf::from("/tmp/company.pem"))
         );
     }
 

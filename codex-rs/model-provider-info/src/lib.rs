@@ -19,6 +19,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::env;
 use std::fmt;
 use std::time::Duration;
 
@@ -33,6 +34,8 @@ const MAX_REQUEST_MAX_RETRIES: u64 = 100;
 
 const OPENAI_PROVIDER_NAME: &str = "OpenAI";
 pub const OPENAI_PROVIDER_ID: &str = "openai";
+const OPENAI_BASE_URL_ENV_VAR: &str = "OPENAI_BASE_URL";
+const BASE_URL_ENV_VAR: &str = "BASE_URL";
 const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer supported.\nHow to fix: set `wire_api = \"responses\"` in your provider config.\nMore info: https://github.com/openai/codex/discussions/7782";
 pub const LEGACY_OLLAMA_CHAT_PROVIDER_ID: &str = "ollama-chat";
 pub const OLLAMA_CHAT_PROVIDER_REMOVED_ERROR: &str = "`ollama-chat` is no longer supported.\nHow to fix: replace `ollama-chat` with `ollama` in `model_provider`, `oss_provider`, or `--local-provider`.\nMore info: https://github.com/openai/codex/discussions/7782";
@@ -261,9 +264,16 @@ impl ModelProviderInfo {
     }
 
     pub fn create_openai_provider(base_url: Option<String>) -> ModelProviderInfo {
+        Self::create_openai_provider_with_env(base_url, &ProcessEnv)
+    }
+
+    fn create_openai_provider_with_env(
+        base_url: Option<String>,
+        env_source: &dyn EnvSource,
+    ) -> ModelProviderInfo {
         ModelProviderInfo {
             name: OPENAI_PROVIDER_NAME.into(),
-            base_url,
+            base_url: resolve_openai_base_url(base_url, env_source),
             env_key: None,
             env_key_instructions: None,
             experimental_bearer_token: None,
@@ -303,6 +313,32 @@ impl ModelProviderInfo {
     pub fn has_command_auth(&self) -> bool {
         self.auth.is_some()
     }
+}
+
+trait EnvSource {
+    fn var(&self, key: &str) -> Option<String>;
+
+    fn non_empty_var(&self, key: &str) -> Option<String> {
+        self.var(key)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+}
+
+struct ProcessEnv;
+
+impl EnvSource for ProcessEnv {
+    fn var(&self, key: &str) -> Option<String> {
+        env::var(key).ok()
+    }
+}
+
+fn resolve_openai_base_url(base_url: Option<String>, env_source: &dyn EnvSource) -> Option<String> {
+    base_url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| env_source.non_empty_var(OPENAI_BASE_URL_ENV_VAR))
+        .or_else(|| env_source.non_empty_var(BASE_URL_ENV_VAR))
 }
 
 pub const DEFAULT_LMSTUDIO_PORT: u16 = 1234;

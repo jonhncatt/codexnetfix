@@ -589,7 +589,7 @@ impl AuthModeWidget {
             "".into(),
         ];
         if state.prepopulated_from_env {
-            intro_lines.push("  Detected OPENAI_API_KEY environment variable.".into());
+            intro_lines.push("  Detected API key environment variable.".into());
             intro_lines.push(
                 "  Paste a different key if you prefer to use another account."
                     .dim()

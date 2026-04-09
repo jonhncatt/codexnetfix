@@ -124,6 +124,44 @@ async fn responses_mode_stream_cli_supports_openai_base_url_config_override() {
     assert_eq!(request.path(), "/v1/responses");
 }
 
+/// Ensures enterprise-style env aliases can drive the built-in openai provider.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn responses_mode_stream_cli_supports_openai_compatible_env_aliases() {
+    skip_if_no_network!();
+
+    let server = MockServer::start().await;
+    let repo_root = repo_root();
+    let sse = responses::sse(vec![
+        responses::ev_response_created("resp-1"),
+        responses::ev_assistant_message("msg-1", "hi"),
+        responses::ev_completed("resp-1"),
+    ]);
+    let resp_mock = responses::mount_sse_once(&server, sse).await;
+
+    let home = TempDir::new().unwrap();
+    let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+    let mut cmd = AssertCommand::new(bin);
+    cmd.timeout(Duration::from_secs(30));
+    cmd.arg("exec")
+        .arg("--skip-git-repo-check")
+        .arg("-C")
+        .arg(&repo_root)
+        .arg("hello?");
+    cmd.env("CODEX_HOME", home.path())
+        .env("BASE_URL", format!("{}/v1", server.uri()))
+        .env("API_KEY", "dummy")
+        .env_remove(CODEX_API_KEY_ENV_VAR)
+        .env_remove("OPENAI_API_KEY")
+        .env_remove("OPENAI_BASE_URL");
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    let request = resp_mock.single_request();
+    assert_eq!(request.path(), "/v1/responses");
+    assert_eq!(request.header("authorization").as_deref(), Some("Bearer dummy"));
+}
+
 /// Verify that passing `-c model_instructions_file=...` to the CLI
 /// overrides the built-in base instructions by inspecting the request body
 /// received by a mock OpenAI Responses endpoint.

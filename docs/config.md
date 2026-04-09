@@ -55,12 +55,37 @@ components that build reqwest clients or secure websocket clients through the
 shared `codex-client` CA-loading path and remote MCP connections that use it.
 
 Set `CODEX_CA_CERTIFICATE` to the path of a PEM file containing one or more
-certificate blocks to use a Codex-specific CA bundle. If
-`CODEX_CA_CERTIFICATE` is unset, Codex falls back to `SSL_CERT_FILE`. If
-neither variable is set, Codex uses the system root certificates.
+certificate blocks to use a Codex-specific CA bundle. For OpenAI-compatible
+enterprise environments, Codex also understands `CA_CERT_PATH`,
+`OFFICETOOL_CA_CERT_PATH`, and `OFFCIATOOL_CA_CERT_PATH`. If none of those are
+set, Codex falls back to `SSL_CERT_FILE`. If no CA override is set, Codex uses
+the system root certificates.
 
-`CODEX_CA_CERTIFICATE` takes precedence over `SSL_CERT_FILE`. Empty values are
-treated as unset.
+`CODEX_CA_CERTIFICATE` takes precedence over `CA_CERT_PATH`,
+`OFFICETOOL_CA_CERT_PATH`, `OFFCIATOOL_CA_CERT_PATH`, and `SSL_CERT_FILE`.
+Empty values are treated as unset.
+
+## OpenAI-Compatible Enterprise APIs
+
+If your company exposes an OpenAI-compatible endpoint, Codex can read these
+environment variables directly without extra wrapper scripts:
+
+- API key: `CODEX_API_KEY`, `OPENAI_API_KEY`, or `API_KEY`
+- Base URL: `OPENAI_BASE_URL` or `BASE_URL`
+- Custom CA bundle: `CODEX_CA_CERTIFICATE`, `CA_CERT_PATH`,
+  `OFFICETOOL_CA_CERT_PATH`, `OFFCIATOOL_CA_CERT_PATH`, or `SSL_CERT_FILE`
+
+Example:
+
+```bash
+export API_KEY="sk-your-company-token"
+export BASE_URL="https://your-company-gateway.example.com/v1"
+export CA_CERT_PATH="/path/to/company-root-ca.pem"
+codex
+```
+
+If `~/.codex/config.toml` also sets `openai_base_url`, the config value wins
+over the environment.
 
 The PEM file may contain multiple certificates. Codex also tolerates OpenSSL
 `TRUSTED CERTIFICATE` labels and ignores well-formed `X509 CRL` sections in the

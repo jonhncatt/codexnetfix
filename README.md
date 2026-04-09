@@ -50,6 +50,25 @@ Run `codex` and select **Sign in with ChatGPT**. We recommend signing into your 
 
 You can also use Codex with an API key, but this requires [additional setup](https://developers.openai.com/codex/auth#sign-in-with-an-api-key).
 
+### Using an OpenAI-compatible company gateway
+
+This fork also supports enterprise OpenAI-compatible deployments directly from
+environment variables. It can read:
+
+- API key from `CODEX_API_KEY`, `OPENAI_API_KEY`, or `API_KEY`
+- Base URL from `OPENAI_BASE_URL` or `BASE_URL`
+- Custom CA bundle from `CODEX_CA_CERTIFICATE`, `CA_CERT_PATH`,
+  `OFFICETOOL_CA_CERT_PATH`, `OFFCIATOOL_CA_CERT_PATH`, or `SSL_CERT_FILE`
+
+Example:
+
+```shell
+export API_KEY="sk-your-company-token"
+export BASE_URL="https://your-company-gateway.example.com/v1"
+export CA_CERT_PATH="/path/to/company-root-ca.pem"
+codex
+```
+
 ## Docs
 
 - [**Codex Documentation**](https://developers.openai.com/codex)

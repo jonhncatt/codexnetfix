@@ -699,6 +699,66 @@ async fn enforce_login_restrictions_blocks_env_api_key_when_chatgpt_required() {
     );
 }
 
+#[tokio::test]
+#[serial(codex_api_key)]
+async fn load_auth_uses_openai_api_key_env_when_enabled() {
+    let _codex_guard = EnvVarGuard::set(CODEX_API_KEY_ENV_VAR, "");
+    let _openai_guard = EnvVarGuard::set(OPENAI_API_KEY_ENV_VAR, "sk-openai-env");
+    let _api_guard = EnvVarGuard::set(API_KEY_ENV_VAR, "");
+    let codex_home = tempdir().unwrap();
+
+    let auth = super::load_auth(
+        codex_home.path(),
+        /*enable_codex_api_key_env*/ true,
+        AuthCredentialsStoreMode::File,
+    )
+    .expect("load auth")
+    .expect("auth available");
+
+    assert_eq!(auth.auth_mode(), AuthMode::ApiKey);
+    assert_eq!(auth.api_key(), Some("sk-openai-env"));
+}
+
+#[tokio::test]
+#[serial(codex_api_key)]
+async fn load_auth_uses_generic_api_key_env_alias_when_enabled() {
+    let _codex_guard = EnvVarGuard::set(CODEX_API_KEY_ENV_VAR, "");
+    let _openai_guard = EnvVarGuard::set(OPENAI_API_KEY_ENV_VAR, "");
+    let _api_guard = EnvVarGuard::set(API_KEY_ENV_VAR, "sk-generic-env");
+    let codex_home = tempdir().unwrap();
+
+    let auth = super::load_auth(
+        codex_home.path(),
+        /*enable_codex_api_key_env*/ true,
+        AuthCredentialsStoreMode::File,
+    )
+    .expect("load auth")
+    .expect("auth available");
+
+    assert_eq!(auth.auth_mode(), AuthMode::ApiKey);
+    assert_eq!(auth.api_key(), Some("sk-generic-env"));
+}
+
+#[tokio::test]
+#[serial(codex_api_key)]
+async fn load_auth_prefers_codex_api_key_env_over_other_aliases() {
+    let _codex_guard = EnvVarGuard::set(CODEX_API_KEY_ENV_VAR, "sk-codex-env");
+    let _openai_guard = EnvVarGuard::set(OPENAI_API_KEY_ENV_VAR, "sk-openai-env");
+    let _api_guard = EnvVarGuard::set(API_KEY_ENV_VAR, "sk-generic-env");
+    let codex_home = tempdir().unwrap();
+
+    let auth = super::load_auth(
+        codex_home.path(),
+        /*enable_codex_api_key_env*/ true,
+        AuthCredentialsStoreMode::File,
+    )
+    .expect("load auth")
+    .expect("auth available");
+
+    assert_eq!(auth.auth_mode(), AuthMode::ApiKey);
+    assert_eq!(auth.api_key(), Some("sk-codex-env"));
+}
+
 #[test]
 fn plan_type_maps_known_plan() {
     let codex_home = tempdir().unwrap();

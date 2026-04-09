@@ -402,19 +402,25 @@ impl ChatgptAuth {
 
 pub const OPENAI_API_KEY_ENV_VAR: &str = "OPENAI_API_KEY";
 pub const CODEX_API_KEY_ENV_VAR: &str = "CODEX_API_KEY";
+pub const API_KEY_ENV_VAR: &str = "API_KEY";
 
-pub fn read_openai_api_key_from_env() -> Option<String> {
-    env::var(OPENAI_API_KEY_ENV_VAR)
+fn read_non_empty_env_var(key: &str) -> Option<String> {
+    env::var(key)
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
+pub fn read_openai_api_key_from_env() -> Option<String> {
+    read_non_empty_env_var(OPENAI_API_KEY_ENV_VAR).or_else(|| read_non_empty_env_var(API_KEY_ENV_VAR))
+}
+
 pub fn read_codex_api_key_from_env() -> Option<String> {
-    env::var(CODEX_API_KEY_ENV_VAR)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    read_non_empty_env_var(CODEX_API_KEY_ENV_VAR)
+}
+
+pub fn read_api_key_from_env() -> Option<String> {
+    read_codex_api_key_from_env().or_else(read_openai_api_key_from_env)
 }
 
 /// Delete the auth.json file inside `codex_home` if it exists. Returns `Ok(true)`
@@ -604,7 +610,7 @@ fn load_auth(
     };
 
     // API key via env var takes precedence over any other auth method.
-    if enable_codex_api_key_env && let Some(api_key) = read_codex_api_key_from_env() {
+    if enable_codex_api_key_env && let Some(api_key) = read_api_key_from_env() {
         return Ok(Some(CodexAuth::from_api_key(api_key.as_str())));
     }
 
