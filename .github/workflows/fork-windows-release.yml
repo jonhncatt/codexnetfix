@@ -1,0 +1,220 @@
+name: fork-windows-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version to publish (for example 0.1.0-company.1)
+        required: true
+        type: string
+      prerelease:
+        description: Mark the GitHub Release as a prerelease
+        required: false
+        default: true
+        type: boolean
+  push:
+    tags:
+      - "rust-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.vars.outputs.version }}
+      tag: ${{ steps.vars.outputs.tag }}
+      prerelease: ${{ steps.vars.outputs.prerelease }}
+    steps:
+      - name: Resolve release metadata
+        id: vars
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#rust-v}"
+            if [[ "$version" == *-* ]]; then
+              prerelease=true
+            else
+              prerelease=false
+            fi
+          else
+            version="${INPUT_VERSION#rust-v}"
+            if [[ -z "$version" ]]; then
+              echo "version input is required" >&2
+              exit 1
+            fi
+            prerelease="${INPUT_PRERELEASE:-true}"
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=rust-v$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+  build-windows-x64:
+    name: build-windows-x64
+    needs:
+      - metadata
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: codex-rs
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build native Windows binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked \
+            --target x86_64-pc-windows-msvc \
+            --release \
+            --bin codex \
+            --bin codex-windows-sandbox-setup \
+            --bin codex-command-runner
+
+      - name: Stage build outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="../dist/windows-x64"
+          mkdir -p "$dest"
+          cp target/x86_64-pc-windows-msvc/release/codex.exe "$dest/codex.exe"
+          cp target/x86_64-pc-windows-msvc/release/codex-command-runner.exe "$dest/codex-command-runner.exe"
+          cp target/x86_64-pc-windows-msvc/release/codex-windows-sandbox-setup.exe "$dest/codex-windows-sandbox-setup.exe"
+
+      - name: Upload staged Windows binaries
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: fork-windows-x64-binaries
+          path: dist/windows-x64/*
+          if-no-files-found: error
+
+  package-and-release:
+    name: package-and-release
+    needs:
+      - metadata
+      - build-windows-x64
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Download staged Windows binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: fork-windows-x64-binaries
+          path: dist/windows-x64
+
+      - name: Setup Node.js for npm packaging
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: 22
+
+      - name: Package Windows release assets
+        shell: bash
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          VENDOR_ROOT: ${{ runner.temp }}/codex-vendor
+        run: |
+          set -euo pipefail
+
+          vendor_root="$VENDOR_ROOT"
+          target_dir="$vendor_root/x86_64-pc-windows-msvc"
+          mkdir -p "$target_dir/codex" "$target_dir/path"
+
+          cp dist/windows-x64/codex.exe "$target_dir/codex/codex.exe"
+          cp dist/windows-x64/codex-command-runner.exe "$target_dir/codex/codex-command-runner.exe"
+          cp dist/windows-x64/codex-windows-sandbox-setup.exe "$target_dir/codex/codex-windows-sandbox-setup.exe"
+
+          python3 - <<'PY'
+          import importlib.util
+          import os
+          import pathlib
+
+          repo_root = pathlib.Path.cwd()
+          vendor_root = pathlib.Path(os.environ["VENDOR_ROOT"])
+          manifest_path = repo_root / "codex-cli" / "bin" / "rg"
+          module_path = repo_root / "codex-cli" / "scripts" / "install_native_deps.py"
+
+          spec = importlib.util.spec_from_file_location("install_native_deps", module_path)
+          module = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(module)
+          module.fetch_rg(vendor_root, ["x86_64-pc-windows-msvc"], manifest_path=manifest_path)
+          PY
+
+          cp "$target_dir/path/rg.exe" dist/windows-x64/rg.exe
+
+          staging_dir="$RUNNER_TEMP/codex-npm-stage"
+          rm -rf "$staging_dir"
+          mkdir -p "$staging_dir"
+
+          python3 codex-cli/scripts/build_npm_package.py \
+            --package codex-win32-x64 \
+            --release-version "$VERSION" \
+            --staging-dir "$staging_dir" \
+            --pack-output "dist/codex-npm-win32-x64-$VERSION.tgz" \
+            --vendor-src "$vendor_root"
+
+          portable_dir="$RUNNER_TEMP/codex-windows-x64-portable"
+          rm -rf "$portable_dir"
+          mkdir -p "$portable_dir"
+          cp dist/windows-x64/codex.exe "$portable_dir/codex.exe"
+          cp dist/windows-x64/codex-command-runner.exe "$portable_dir/codex-command-runner.exe"
+          cp dist/windows-x64/codex-windows-sandbox-setup.exe "$portable_dir/codex-windows-sandbox-setup.exe"
+          cp dist/windows-x64/rg.exe "$portable_dir/rg.exe"
+
+          (
+            cd "$portable_dir"
+            zip -r "$GITHUB_WORKSPACE/dist/codex-windows-x64-portable-$VERSION.zip" .
+          )
+
+          cp scripts/install/install.ps1 "dist/install.ps1"
+
+          cat > dist/release-notes.md <<EOF
+          Native Windows x64 release assets for ${GITHUB_REPOSITORY}.
+
+          Assets:
+          - codex-npm-win32-x64-$VERSION.tgz: used by scripts/install/install.ps1
+          - codex-windows-x64-portable-$VERSION.zip: unzip and run without installing
+          - install.ps1: Windows installer script
+
+          Installer example:
+          \$env:CODEX_INSTALL_REPO = '${GITHUB_REPOSITORY}'
+          .\\install.ps1 $VERSION
+          EOF
+
+      - name: Upload packaged assets
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: fork-windows-x64-release-assets
+          path: |
+            dist/codex-npm-win32-x64-*.tgz
+            dist/codex-windows-x64-portable-*.zip
+            dist/install.ps1
+            dist/release-notes.md
+          if-no-files-found: error
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        with:
+          tag_name: ${{ needs.metadata.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ needs.metadata.outputs.version }}
+          body_path: dist/release-notes.md
+          files: |
+            dist/codex-npm-win32-x64-*.tgz
+            dist/codex-windows-x64-portable-*.zip
+            dist/install.ps1
+          prerelease: ${{ needs.metadata.outputs.prerelease == 'true' }}
+          overwrite_files: true

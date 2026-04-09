@@ -69,6 +69,34 @@ export CA_CERT_PATH="/path/to/company-root-ca.pem"
 codex
 ```
 
+### Native Windows install from this fork
+
+This fork can also be used on native Windows without WSL2, but it still runs as
+a local CLI application rather than a browser app.
+
+1. In GitHub Actions, run the `fork-windows-release` workflow with a version
+   such as `0.1.0-company.1`.
+2. On the Windows machine, download `install.ps1` from that release or from this
+   repository, then point the installer at this fork:
+
+```powershell
+$env:CODEX_INSTALL_REPO = "jonhncatt/codexnetfix"
+iwr https://raw.githubusercontent.com/jonhncatt/codexnetfix/main/scripts/install/install.ps1 -OutFile install.ps1
+.\install.ps1 0.1.0-company.1
+```
+
+If you do not want an installer at all, use the release asset
+`codex-windows-x64-portable-<version>.zip`, unzip it anywhere, and run
+`codex.exe` from PowerShell.
+
+Example company environment on Windows:
+
+```powershell
+[Environment]::SetEnvironmentVariable("API_KEY", "your-company-token", "User")
+[Environment]::SetEnvironmentVariable("BASE_URL", "https://your-company-gateway.example.com/v1", "User")
+[Environment]::SetEnvironmentVariable("CA_CERT_PATH", "C:\\Users\\you\\certs\\company-root-ca.pem", "User")
+```
+
 ## Docs
 
 - [**Codex Documentation**](https://developers.openai.com/codex)

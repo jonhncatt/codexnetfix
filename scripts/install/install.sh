@@ -4,6 +4,7 @@ set -eu
 
 VERSION="${1:-latest}"
 INSTALL_DIR="${CODEX_INSTALL_DIR:-$HOME/.local/bin}"
+INSTALL_REPO="${CODEX_INSTALL_REPO:-openai/codex}"
 path_action="already"
 path_profile=""
 
@@ -101,7 +102,7 @@ release_url_for_asset() {
   asset="$1"
   resolved_version="$2"
 
-  printf 'https://github.com/openai/codex/releases/download/rust-v%s/%s\n' "$resolved_version" "$asset"
+  printf 'https://github.com/%s/releases/download/rust-v%s/%s\n' "$INSTALL_REPO" "$resolved_version" "$asset"
 }
 
 require_command() {
@@ -122,7 +123,7 @@ resolve_version() {
     return
   fi
 
-  release_json="$(download_text "https://api.github.com/repos/openai/codex/releases/latest")"
+  release_json="$(download_text "https://api.github.com/repos/$INSTALL_REPO/releases/latest")"
   resolved="$(printf '%s\n' "$release_json" | sed -n 's/.*"tag_name":[[:space:]]*"rust-v\([^"]*\)".*/\1/p' | head -n 1)"
 
   if [ -z "$resolved" ]; then
@@ -195,6 +196,7 @@ fi
 
 step "$install_mode Codex CLI"
 step "Detected platform: $platform_label"
+step "Release source: $INSTALL_REPO"
 
 resolved_version="$(resolve_version)"
 asset="codex-npm-$npm_tag-$resolved_version.tgz"

@@ -4,13 +4,45 @@
 
 | Requirement                 | Details                                                         |
 | --------------------------- | --------------------------------------------------------------- |
-| Operating systems           | macOS 12+, Ubuntu 20.04+/Debian 10+, or Windows 11 **via WSL2** |
+| Operating systems           | macOS 12+, Ubuntu 20.04+/Debian 10+, or Windows 11 (WSL2 recommended for source builds; native release installs are also supported) |
 | Git (optional, recommended) | 2.23+ for built-in PR helpers                                   |
 | RAM                         | 4-GB minimum (8-GB recommended)                                 |
 
 ### DotSlash
 
 The GitHub Release also contains a [DotSlash](https://dotslash-cli.com/) file for the Codex CLI named `codex`. Using a DotSlash file makes it possible to make a lightweight commit to source control to ensure all contributors use the same version of an executable, regardless of what platform they use for development.
+
+### Installing from a custom GitHub fork
+
+Both installer scripts support overriding the GitHub repository that provides
+release assets.
+
+- PowerShell: set `CODEX_INSTALL_REPO=owner/repo` before running
+  [`scripts/install/install.ps1`](../scripts/install/install.ps1)
+- macOS/Linux: set `CODEX_INSTALL_REPO=owner/repo` before running
+  [`scripts/install/install.sh`](../scripts/install/install.sh)
+
+This is useful when a fork publishes its own release assets with the same
+layout as upstream.
+
+### Native Windows on this fork
+
+This fork includes a `fork-windows-release` GitHub Actions workflow that
+publishes:
+
+- `codex-npm-win32-x64-<version>.tgz` for `install.ps1`
+- `codex-windows-x64-portable-<version>.zip` for unzip-and-run usage
+
+Example:
+
+```powershell
+$env:CODEX_INSTALL_REPO = "jonhncatt/codexnetfix"
+iwr https://raw.githubusercontent.com/jonhncatt/codexnetfix/main/scripts/install/install.ps1 -OutFile install.ps1
+.\install.ps1 0.1.0-company.1
+```
+
+If you prefer not to install anything into `PATH`, download the portable zip,
+extract it anywhere, and run `codex.exe` directly from PowerShell.
 
 ### Build from source
 
