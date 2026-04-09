@@ -451,7 +451,7 @@ where
         environment_manager,
         config_warnings,
         session_source: codex_protocol::protocol::SessionSource::Cli,
-        enable_codex_api_key_env: false,
+        enable_codex_api_key_env: true,
         client_name: "codex-tui".to_string(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         experimental_api: true,
@@ -753,7 +753,7 @@ pub async fn run_main(
         .unwrap_or_else(|| "https://chatgpt.com/backend-api/".to_string());
     let cloud_requirements = cloud_requirements_loader_for_storage(
         codex_home.to_path_buf(),
-        /*enable_codex_api_key_env*/ false,
+        /*enable_codex_api_key_env*/ true,
         config_toml.cli_auth_credentials_store.unwrap_or_default(),
         chatgpt_base_url,
     );
@@ -1117,7 +1117,7 @@ async fn run_ratatui_app(
         if show_login_screen && !remote_mode {
             cloud_requirements = cloud_requirements_loader_for_storage(
                 initial_config.codex_home.clone(),
-                /*enable_codex_api_key_env*/ false,
+                /*enable_codex_api_key_env*/ true,
                 initial_config.cli_auth_credentials_store_mode,
                 initial_config.chatgpt_base_url.clone(),
             );
