@@ -3,7 +3,9 @@ use crate::requests::headers::build_conversation_headers;
 use crate::requests::headers::insert_header;
 use crate::requests::headers::subagent_header;
 use codex_protocol::models::ContentItem;
+use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
+use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::ReasoningItemContent;
 use codex_protocol::protocol::SessionSource;
@@ -234,22 +236,7 @@ impl<'a> ChatRequestBuilder<'a> {
                     push_tool_call_message(&mut messages, tool_call, reasoning);
                 }
                 ResponseItem::FunctionCallOutput { call_id, output } => {
-                    let content_value = if let Some(items) = &output.content_items {
-                        let mapped: Vec<Value> = items
-                            .iter()
-                            .map(|it| match it {
-                                FunctionCallOutputContentItem::InputText { text } => {
-                                    json!({"type":"text","text": text})
-                                }
-                                FunctionCallOutputContentItem::InputImage { image_url, .. } => {
-                                    json!({"type":"image_url","image_url": {"url": image_url}})
-                                }
-                            })
-                            .collect();
-                        json!(mapped)
-                    } else {
-                        json!(output.content)
-                    };
+                    let content_value = function_call_output_content_value(output);
 
                     messages.push(json!({
                         "role": "tool",
@@ -272,22 +259,7 @@ impl<'a> ChatRequestBuilder<'a> {
                     push_tool_call_message(&mut messages, tool_call, reasoning);
                 }
                 ResponseItem::CustomToolCallOutput { call_id, output, .. } => {
-                    let content_value = if let Some(items) = &output.content_items {
-                        let mapped: Vec<Value> = items
-                            .iter()
-                            .map(|it| match it {
-                                FunctionCallOutputContentItem::InputText { text } => {
-                                    json!({"type":"text","text": text})
-                                }
-                                FunctionCallOutputContentItem::InputImage { image_url, .. } => {
-                                    json!({"type":"image_url","image_url": {"url": image_url}})
-                                }
-                            })
-                            .collect();
-                        json!(mapped)
-                    } else {
-                        json!(output.content)
-                    };
+                    let content_value = function_call_output_content_value(output);
 
                     messages.push(json!({
                         "role": "tool",
@@ -363,6 +335,26 @@ fn push_tool_call_message(messages: &mut Vec<Value>, tool_call: Value, reasoning
         obj.insert("reasoning".to_string(), json!(reasoning));
     }
     messages.push(msg);
+}
+
+fn function_call_output_content_value(output: &FunctionCallOutputPayload) -> Value {
+    match &output.body {
+        FunctionCallOutputBody::Text(content) => json!(content),
+        FunctionCallOutputBody::ContentItems(items) => {
+            let mapped: Vec<Value> = items
+                .iter()
+                .map(|it| match it {
+                    FunctionCallOutputContentItem::InputText { text } => {
+                        json!({"type":"text","text": text})
+                    }
+                    FunctionCallOutputContentItem::InputImage { image_url, .. } => {
+                        json!({"type":"image_url","image_url": {"url": image_url}})
+                    }
+                })
+                .collect();
+            json!(mapped)
+        }
+    }
 }
 
 #[cfg(test)]
