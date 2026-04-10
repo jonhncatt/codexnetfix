@@ -1,3 +1,4 @@
+use crate::apply_patch_tool::create_apply_patch_json_tool;
 use crate::FreeformTool;
 use crate::JsonSchema;
 use crate::ResponsesApiTool;
@@ -144,6 +145,42 @@ pub fn create_tools_json_for_responses_api(
     for tool in tools {
         let json = serde_json::to_value(tool)?;
         tools_json.push(json);
+    }
+
+    Ok(tools_json)
+}
+
+/// Returns JSON values that are compatible with Function Calling in the
+/// Chat Completions API:
+/// https://platform.openai.com/docs/guides/function-calling?api-mode=chat
+pub fn create_tools_json_for_chat_completions_api(
+    tools: &[ToolSpec],
+) -> Result<Vec<Value>, serde_json::Error> {
+    fn chat_function_json(tool: &ResponsesApiTool) -> Result<Value, serde_json::Error> {
+        Ok(serde_json::json!({
+            "type": "function",
+            "function": serde_json::to_value(tool)?,
+        }))
+    }
+
+    let mut tools_json = Vec::new();
+    for tool in tools {
+        match tool {
+            ToolSpec::Function(tool) => tools_json.push(chat_function_json(tool)?),
+            // Chat Completions does not support freeform tools, so downgrade apply_patch
+            // to the JSON function variant to preserve file editing.
+            ToolSpec::Freeform(tool) if tool.name == "apply_patch" => {
+                let ToolSpec::Function(apply_patch_tool) = create_apply_patch_json_tool() else {
+                    unreachable!("apply_patch json helper must return a function tool");
+                };
+                tools_json.push(chat_function_json(&apply_patch_tool)?);
+            }
+            ToolSpec::ToolSearch { .. }
+            | ToolSpec::LocalShell {}
+            | ToolSpec::ImageGeneration { .. }
+            | ToolSpec::WebSearch { .. }
+            | ToolSpec::Freeform(_) => {}
+        }
     }
 
     Ok(tools_json)

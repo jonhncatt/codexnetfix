@@ -32,6 +32,9 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use codex_api::ApiError;
+use codex_api::AggregateStreamExt;
+use codex_api::ChatClient as ApiChatClient;
+use codex_api::ChatRequestBuilder as ApiChatRequestBuilder;
 use codex_api::CompactClient as ApiCompactClient;
 use codex_api::CompactionInput as ApiCompactionInput;
 use codex_api::Compression;
@@ -77,6 +80,7 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_tools::create_tools_json_for_responses_api;
+use codex_tools::create_tools_json_for_chat_completions_api;
 use eventsource_stream::Event;
 use eventsource_stream::EventStreamError;
 use futures::StreamExt;
@@ -131,6 +135,7 @@ pub const X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER: &str =
     "x-responsesapi-include-timing-metrics";
 const RESPONSES_WEBSOCKETS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
 const RESPONSES_ENDPOINT: &str = "/responses";
+const CHAT_COMPLETIONS_ENDPOINT: &str = "/chat/completions";
 const RESPONSES_COMPACT_ENDPOINT: &str = "/responses/compact";
 const MEMORIES_SUMMARIZE_ENDPOINT: &str = "/memories/trace_summarize";
 #[cfg(test)]
@@ -155,6 +160,7 @@ struct ModelClientState {
     include_timing_metrics: bool,
     beta_features_header: Option<String>,
     disable_websockets: AtomicBool,
+    force_chat_completions: AtomicBool,
     cached_websocket_session: StdMutex<WebsocketSession>,
 }
 
@@ -326,6 +332,7 @@ impl ModelClient {
                 include_timing_metrics,
                 beta_features_header,
                 disable_websockets: AtomicBool::new(false),
+                force_chat_completions: AtomicBool::new(false),
                 cached_websocket_session: StdMutex::new(WebsocketSession::default()),
             }),
         }
@@ -400,6 +407,41 @@ impl ModelClient {
         }
 
         self.store_cached_websocket_session(WebsocketSession::default());
+        activated
+    }
+
+    fn effective_wire_api(&self) -> WireApi {
+        if self.state.provider.wire_api == WireApi::Responses
+            && self
+                .state
+                .force_chat_completions
+                .load(Ordering::Relaxed)
+        {
+            WireApi::Chat
+        } else {
+            self.state.provider.wire_api
+        }
+    }
+
+    fn force_chat_completions_fallback(
+        &self,
+        session_telemetry: &SessionTelemetry,
+        _model_info: &ModelInfo,
+    ) -> bool {
+        let activated = !self
+            .state
+            .force_chat_completions
+            .swap(true, Ordering::Relaxed);
+        if activated {
+            self.state.disable_websockets.store(true, Ordering::Relaxed);
+            warn!("falling back to chat/completions");
+            session_telemetry.counter(
+                "codex.transport.fallback_to_chat_completions",
+                /*inc*/ 1,
+                &[("from_wire_api", "responses")],
+            );
+            self.store_cached_websocket_session(WebsocketSession::default());
+        }
         activated
     }
 
@@ -645,7 +687,8 @@ impl ModelClient {
     ///
     /// WebSocket use is controlled by provider capability and session-scoped fallback state.
     pub fn responses_websocket_enabled(&self) -> bool {
-        if !self.state.provider.supports_websockets
+        if self.effective_wire_api() != WireApi::Responses
+            || !self.state.provider.supports_websockets
             || self.state.disable_websockets.load(Ordering::Relaxed)
             || (*CODEX_RS_SSE_FIXTURE).is_some()
         {
@@ -886,6 +929,28 @@ impl ModelClientSession {
             )])),
         };
         Ok(request)
+    }
+
+    fn build_chat_request(
+        &self,
+        prompt: &Prompt,
+        model_info: &ModelInfo,
+    ) -> Result<codex_api::ChatRequest> {
+        if prompt.output_schema.is_some() {
+            return Err(CodexErr::UnsupportedOperation(
+                "output_schema is not supported for Chat Completions API".to_string(),
+            ));
+        }
+
+        let input = prompt.get_formatted_input();
+        let instructions = &prompt.base_instructions.text;
+        let tools = create_tools_json_for_chat_completions_api(&prompt.tools)?;
+
+        ApiChatRequestBuilder::new(&model_info.slug, instructions, &input, &tools)
+            .conversation_id(Some(self.client.state.conversation_id.to_string()))
+            .session_source(Some(self.client.state.session_source.clone()))
+            .build()
+            .map_err(map_api_error)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1204,6 +1269,81 @@ impl ModelClientSession {
                     let (stream, _) = map_response_stream(stream, session_telemetry.clone());
                     return Ok(stream);
                 }
+                Err(err) if should_retry_with_chat_completions(&err) => {
+                    self.client
+                        .force_chat_completions_fallback(session_telemetry, model_info);
+                    self.reset_websocket_session();
+                    return self
+                        .stream_chat_completions(prompt, model_info, session_telemetry)
+                        .await;
+                }
+                Err(ApiError::Transport(
+                    unauthorized_transport @ TransportError::Http { status, .. },
+                )) if status == StatusCode::UNAUTHORIZED => {
+                    pending_retry = PendingUnauthorizedRetry::from_recovery(
+                        handle_unauthorized(
+                            unauthorized_transport,
+                            &mut auth_recovery,
+                            session_telemetry,
+                        )
+                        .await?,
+                    );
+                    continue;
+                }
+                Err(err) => return Err(map_api_error(err)),
+            }
+        }
+    }
+
+    #[instrument(
+        name = "model_client.stream_chat_completions",
+        level = "info",
+        skip_all,
+        fields(
+            model = %model_info.slug,
+            wire_api = "chat",
+            transport = "chat_completions_http",
+            http.method = "POST",
+            api.path = "chat/completions"
+        )
+    )]
+    async fn stream_chat_completions(
+        &self,
+        prompt: &Prompt,
+        model_info: &ModelInfo,
+        session_telemetry: &SessionTelemetry,
+    ) -> Result<ResponseStream> {
+        let auth_manager = self.client.state.auth_manager.clone();
+        let mut auth_recovery = auth_manager
+            .as_ref()
+            .map(AuthManager::unauthorized_recovery);
+        let mut pending_retry = PendingUnauthorizedRetry::default();
+        loop {
+            let client_setup = self.client.current_client_setup().await?;
+            let transport = ReqwestTransport::new(build_reqwest_client());
+            let request_auth_context = AuthRequestTelemetryContext::new(
+                client_setup.auth.as_ref().map(CodexAuth::auth_mode),
+                &client_setup.api_auth,
+                pending_retry,
+            );
+            let (request_telemetry, sse_telemetry) = Self::build_streaming_telemetry(
+                session_telemetry,
+                request_auth_context,
+                RequestRouteTelemetry::for_endpoint(CHAT_COMPLETIONS_ENDPOINT),
+                self.client.state.auth_env_telemetry.clone(),
+            );
+            let request = self.build_chat_request(prompt, model_info)?;
+            let client =
+                ApiChatClient::new(transport, client_setup.api_provider, client_setup.api_auth)
+                    .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
+            let stream_result = client.stream_request(request).await;
+
+            match stream_result {
+                Ok(stream) => {
+                    let (stream, _) =
+                        map_response_stream(stream.aggregate(), session_telemetry.clone());
+                    return Ok(stream);
+                }
                 Err(ApiError::Transport(
                     unauthorized_transport @ TransportError::Http { status, .. },
                 )) if status == StatusCode::UNAUTHORIZED => {
@@ -1384,7 +1524,9 @@ impl ModelClientSession {
         service_tier: Option<ServiceTier>,
         turn_metadata_header: Option<&str>,
     ) -> Result<()> {
-        if !self.client.responses_websocket_enabled() {
+        if self.client.effective_wire_api() != WireApi::Responses
+            || !self.client.responses_websocket_enabled()
+        {
             return Ok(());
         }
         if self.websocket_session.last_request.is_some() {
@@ -1441,7 +1583,7 @@ impl ModelClientSession {
         service_tier: Option<ServiceTier>,
         turn_metadata_header: Option<&str>,
     ) -> Result<ResponseStream> {
-        let wire_api = self.client.state.provider.wire_api;
+        let wire_api = self.client.effective_wire_api();
         match wire_api {
             WireApi::Responses => {
                 if self.client.responses_websocket_enabled() {
@@ -1477,6 +1619,10 @@ impl ModelClientSession {
                     turn_metadata_header,
                 )
                 .await
+            }
+            WireApi::Chat => {
+                self.stream_chat_completions(prompt, model_info, session_telemetry)
+                    .await
             }
         }
     }
@@ -1835,8 +1981,16 @@ async fn handle_unauthorized(
 fn api_error_http_status(error: &ApiError) -> Option<u16> {
     match error {
         ApiError::Transport(TransportError::Http { status, .. }) => Some(status.as_u16()),
+        ApiError::Api { status, .. } => Some(status.as_u16()),
         _ => None,
     }
+}
+
+fn should_retry_with_chat_completions(error: &ApiError) -> bool {
+    matches!(
+        api_error_http_status(error),
+        Some(404 | 405 | 501)
+    )
 }
 
 struct ApiTelemetry {

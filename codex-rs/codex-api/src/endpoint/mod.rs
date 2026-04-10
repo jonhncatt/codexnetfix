@@ -1,3 +1,4 @@
+pub(crate) mod chat;
 pub(crate) mod compact;
 pub(crate) mod memories;
 pub(crate) mod models;
@@ -8,6 +9,8 @@ pub(crate) mod responses_websocket;
 mod session;
 
 pub use compact::CompactClient;
+pub use chat::AggregateStreamExt;
+pub use chat::ChatClient;
 pub use memories::MemoriesClient;
 pub use models::ModelsClient;
 pub use realtime_call::RealtimeCallClient;

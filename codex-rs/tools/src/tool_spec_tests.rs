@@ -7,6 +7,7 @@ use crate::FreeformTool;
 use crate::FreeformToolFormat;
 use crate::JsonSchema;
 use crate::ResponsesApiTool;
+use crate::create_tools_json_for_chat_completions_api;
 use crate::create_tools_json_for_responses_api;
 use codex_protocol::config_types::WebSearchContextSize;
 use codex_protocol::config_types::WebSearchFilters as ConfigWebSearchFilters;
@@ -160,6 +161,44 @@ fn create_tools_json_for_responses_api_includes_top_level_name() {
                 },
             },
         })]
+    );
+}
+
+#[test]
+fn create_tools_json_for_chat_completions_api_keeps_function_tools_and_downgrades_apply_patch() {
+    let tools = vec![
+        ToolSpec::Function(ResponsesApiTool {
+            name: "demo".to_string(),
+            description: "A demo tool".to_string(),
+            strict: false,
+            defer_loading: None,
+            parameters: JsonSchema::object(
+                BTreeMap::from([("foo".to_string(), JsonSchema::string(/*description*/ None),)]),
+                /*required*/ None,
+                /*additional_properties*/ None,
+            ),
+            output_schema: None,
+        }),
+        ToolSpec::Freeform(FreeformTool {
+            name: "apply_patch".to_string(),
+            description: "Use apply_patch".to_string(),
+            format: FreeformToolFormat {
+                r#type: "grammar".to_string(),
+                syntax: "lark".to_string(),
+                definition: "start: \"patch\"".to_string(),
+            },
+        }),
+    ];
+
+    let json = create_tools_json_for_chat_completions_api(&tools).expect("serialize tools");
+    assert_eq!(json.len(), 2);
+    assert_eq!(json[0]["type"], "function");
+    assert_eq!(json[0]["function"]["name"], "demo");
+    assert_eq!(json[1]["type"], "function");
+    assert_eq!(json[1]["function"]["name"], "apply_patch");
+    assert_eq!(
+        json[1]["function"]["parameters"]["required"],
+        json!(["input"])
     );
 }
 

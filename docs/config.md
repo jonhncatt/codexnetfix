@@ -79,13 +79,31 @@ Example:
 
 ```bash
 export API_KEY="sk-your-company-token"
-export BASE_URL="https://your-company-gateway.example.com/v1"
+export BASE_URL="https://your-company-gateway.example.com/api/v1"
 export CA_CERT_PATH="/path/to/company-root-ca.pem"
 codex
 ```
 
 If `~/.codex/config.toml` also sets `openai_base_url`, the config value wins
 over the environment.
+
+Some enterprise gateways only implement `POST /chat/completions` and return
+`405 Method Not Allowed` for `POST /responses`. This fork can fall back to
+Chat Completions automatically after a `404`, `405`, or `501` from the
+Responses API.
+
+If you want to force Chat Completions from the start, define a custom provider
+in `~/.codex/config.toml` and set `wire_api = "chat"`:
+
+```toml
+model_provider = "company"
+
+[model_providers.company]
+name = "Company Gateway"
+base_url = "https://your-company-gateway.example.com/api/v1"
+env_key = "API_KEY"
+wire_api = "chat"
+```
 
 The PEM file may contain multiple certificates. Codex also tolerates OpenSSL
 `TRUSTED CERTIFICATE` labels and ignores well-formed `X509 CRL` sections in the
